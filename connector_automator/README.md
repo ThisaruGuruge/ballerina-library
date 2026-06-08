@@ -17,10 +17,11 @@ Both workflows produce production-ready Ballerina connectors with typed clients,
 
 - **OpenAPI Sanitization**: Flatten, align, and enhance OpenAPI specifications with AI-generated metadata. Records changes in `sanitations.md` for later regeneration
 - **Ballerina Client Generation**: Create typed Ballerina clients from OpenAPI specs with proper conventions
+- **Connector Client Generation**: AI-driven generation of a curated `Connector` class following the Connector Client pattern — 3–15 `@operation`-annotated remote methods wrapping the generated `Client`, optimised for discoverability in WSO2 Integrator and Ballerina Workflows
 - **Java SDK Analysis**: Parse Java SDK JARs and extract method/type metadata via Javadoc + bytecode analysis
 - **IR Generation**: Convert Java SDK metadata into a structured Intermediate Representation (IR) for connector code generation
 - **Connector Generation**: Generate Ballerina client + native Java adaptor from IR and API spec
-- **Code Fixing**: AI-powered automatic resolution of compilation errors (Java native + Ballerina)
+- **Code Fixing**: AI-powered automatic resolution of compilation errors (Java native + Ballerina client + Connector client)
 - **Example Generation**: AI-powered generation of realistic usage examples
 - **Test Generation**: Comprehensive test suites — mock server tests (OpenAPI) or live integration tests (SDK)
 - **Documentation Generation**: Complete README files for all components
@@ -306,23 +307,26 @@ bal run -- openapi pipeline <spec> <output-dir> [options]
 | `yes` | Auto-confirm all prompts |
 | `quiet` | Minimal logging output |
 | `regenerate` | Reapply recorded sanitations and recover existing tests/examples for a new API spec version |
+| `--generate-connector` | Generate a curated Connector client after the client is built |
 
 **Example:**
 ```bash
 bal run -- openapi pipeline ./openapi.yaml ./my-connector yes
 bal run -- openapi pipeline ./openapi.yaml ./my-connector yes quiet
 bal run -- openapi pipeline ./openapi.yaml ./my-connector yes quiet regenerate
+bal run -- openapi pipeline ./openapi.yaml ./my-connector --generate-connector yes
 ```
 
 **Pipeline Steps:**
 1. Sanitize OpenAPI specification
 2. Generate Ballerina client
 3. Build and validate client
+   - *(3.5) Generate Connector client (opt-in: `--generate-connector`)*
 4. Generate usage examples
 5. Generate mock server + live tests
 6. Generate documentation
 
-When `regenerate` is supplied, the pipeline applies `docs/spec/sanitations.md` to the new specification before sanitizing, attempts to repair existing generated code, and regenerates incompatible tests and examples when recovery is not possible.
+When `regenerate` is supplied, the pipeline applies `docs/spec/sanitations.md` to the new specification before sanitizing, attempts to repair existing generated code, and regenerates incompatible tests and examples when recovery is not possible. Connector client repair (step 3.5) is handled automatically by the code-fixer step in the regeneration pipeline.
 
 ### OpenAPI Step-by-Step Commands
 
@@ -372,15 +376,49 @@ bal run -- openapi generate-client <spec> <output-dir> [options]
 bal run -- openapi generate-client ./aligned_openapi.json ./client resource-methods
 ```
 
-#### 3. Fix Code Errors
+#### 3. Generate Connector Client
 
-AI-powered resolution of compilation errors in the generated Ballerina client:
+Generate a curated `Connector` client alongside the existing `Client`. This produces `connector.bal` with 3–15 `@operation`-annotated remote methods selected and scored by AI, following the [Simple Connector Operations pattern](https://github.com/ballerina-platform/ballerina-spec/blob/master/beps/con-simple-clients/1442_simple_connector_operations.md).
+
+```bash
+bal run -- openapi generate-connector <connector-path> [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `yes` | Auto-confirm all prompts |
+| `quiet` | Minimal logging output |
+
+**What it produces:**
+- Scores all API endpoints on Popularity, Simplification Potential, and Domain Essentiality (0–30 each)
+- Selects the top-scoring operations (threshold ≥ 15/30) up to the target count for the connector's size
+- Generates an `AuthConfig` type with only the credential fields needed for auth
+- Writes `connector.bal` with `public isolated client class Connector` and all selected `@operation` methods
+- Runs `bal build` to validate; automatically runs `fix-code` if compilation errors are found
+
+**If `connector.bal` already exists**, generation is skipped — use `openapi fix-code` to repair an existing Connector client after a `Client` regeneration.
+
+**Example:**
+```bash
+bal run -- openapi generate-connector ./my-connector
+bal run -- openapi generate-connector ./my-connector yes quiet
+```
+
+**Output:** `<connector-path>/ballerina/connector.bal`
+
+#### 4. Fix Code Errors
+
+AI-powered resolution of compilation errors in the generated Ballerina client and Connector client:
 
 ```bash
 bal run -- openapi fix-code <connector-path> [options]
 ```
 
-#### 4. Generate Tests
+The fixer handles `connector.bal` with connector-specific rules: it preserves `@operation` annotations, operation names, and `AuthConfig`, and only updates the `self.baseClient->...` delegation calls to match the current `Client` API. Operations whose underlying API was removed are flagged with a `// REMOVED:` comment rather than deleted.
+
+#### 5. Generate Tests
 
 Generate a mock server module and comprehensive test suite:
 
@@ -401,7 +439,7 @@ cd <connector-path>/ballerina && bal test                           # mock tests
 IS_LIVE_SERVER=true bal test --groups live_tests                    # live tests
 ```
 
-#### 5. Generate Examples
+#### 6. Generate Examples
 
 Create usage examples for the connector:
 
@@ -411,7 +449,7 @@ bal run -- openapi generate-examples <connector-path> [options]
 
 **Output:** `<connector-path>/examples/`
 
-#### 6. Generate Documentation
+#### 7. Generate Documentation
 
 Create README files for all components:
 
@@ -446,8 +484,9 @@ bal run -- openapi generate-docs generate-all ./my-connector yes
 │       └── aligned_ballerina_openapi.json
 ├── ballerina/
 │   ├── Ballerina.toml
-│   ├── client.bal
-│   ├── types.bal
+│   ├── client.bal                         # Generated full-API client
+│   ├── types.bal                          # Generated types
+│   ├── connector.bal                      # Curated Connector client (optional)
 │   ├── utils.bal
 │   ├── README.md
 │   ├── tests/
@@ -496,7 +535,8 @@ The following commands operate directly on dataset keys and the internal directo
 | `connector_generator` | Generates Ballerina client + native Java adaptor from IR and spec |
 | `sanitizor` | OpenAPI specification processing and AI enhancement |
 | `client_generator` | Ballerina client generation from OpenAPI specs |
-| `code_fixer` | AI-powered Java native + Ballerina compilation error resolution |
+| `simple_connector_generator` | AI-driven Connector client generation (scores endpoints, selects operations, generates `connector.bal`) |
+| `code_fixer` | AI-powered Java native + Ballerina compilation error resolution; handles `connector.bal` repair with annotation-preservation rules |
 | `example_generator` | AI-powered usage example creation |
 | `test_generator` | Test suite generation — mock server (OpenAPI) or live integration (SDK) |
 | `document_generator` | README and documentation generation |

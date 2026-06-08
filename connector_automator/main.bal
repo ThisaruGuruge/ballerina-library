@@ -12,6 +12,7 @@ import wso2/connector_automator.document_generator as document_generator;
 import wso2/connector_automator.example_generator as example_generator;
 import wso2/connector_automator.sanitizor as sanitizor;
 import wso2/connector_automator.sdkanalyzer as analyzer;
+import wso2/connector_automator.simple_connector_generator as simple_connector_gen;
 import wso2/connector_automator.test_generator as test_generator;
 import wso2/connector_automator.utils as oautils;
 
@@ -1409,6 +1410,9 @@ function executeOpenApiCommand(string[] args) returns error? {
         "generate-client" => {
             return client_generator:executeClientGen(...subArgs);
         }
+        "generate-connector" => {
+            return simple_connector_gen:executeSimpleConnectorGen(...subArgs);
+        }
         "generate-tests" => {
             return test_generator:executeTestGen("openapi", ...subArgs);
         }
@@ -1451,6 +1455,7 @@ function runOpenApiPipeline(string[] args) returns error? {
     boolean quietMode = false;
     boolean autoYes = false;
     boolean regenerate = false;
+    boolean generateConnector = false;
 
     foreach string option in pipelineOptions {
         if option == "quiet" {
@@ -1459,6 +1464,8 @@ function runOpenApiPipeline(string[] args) returns error? {
             autoYes = true;
         } else if option == "regenerate" {
             regenerate = true;
+        } else if option == "--generate-connector" {
+            generateConnector = true;
         }
     }
 
@@ -1466,9 +1473,15 @@ function runOpenApiPipeline(string[] args) returns error? {
         return runOpenApiRegenerationPipeline(openApiSpec, outputDir, pipelineOptions, quietMode, autoYes);
     }
 
-    printOpenApiPipelineHeader(openApiSpec, outputDir, quietMode, false);
+    int totalSteps = generateConnector ? 7 : 6;
+    int connectorStep = 4;
+    int exampleStep = generateConnector ? 5 : 4;
+    int testStep = generateConnector ? 6 : 5;
+    int docStep = generateConnector ? 7 : 6;
 
-    printOpenApiStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
+    printOpenApiPipelineHeader(openApiSpec, outputDir, quietMode, false, generateConnector);
+
+    printOpenApiStepHeader(1, totalSteps, "Sanitizing OpenAPI Specification", quietMode);
     string[] sanitizeArgs = [openApiSpec, outputDir, ...pipelineOptions];
     error? sanitizeResult = sanitizor:executeSanitizor(...sanitizeArgs);
     if sanitizeResult is error {
@@ -1484,7 +1497,7 @@ function runOpenApiPipeline(string[] args) returns error? {
         io:println(string `Could not generate sanitations.md: ${sanitationsDocResult.message()}`);
     }
 
-    printOpenApiStepHeader(2, "Generating Ballerina Client", quietMode);
+    printOpenApiStepHeader(2, totalSteps, "Generating Ballerina Client", quietMode);
     string sanitizedSpec = string `${outputDir}/docs/spec/aligned_ballerina_openapi.json`;
     string clientPath = string `${outputDir}/ballerina`;
     string[] clientArgs = [sanitizedSpec, clientPath, ...pipelineOptions];
@@ -1496,7 +1509,7 @@ function runOpenApiPipeline(string[] args) returns error? {
         io:println("Client generation completed successfully");
     }
 
-    printOpenApiStepHeader(3, "Building and Validating Client", quietMode);
+    printOpenApiStepHeader(3, totalSteps, "Building and Validating Client", quietMode);
     oautils:CommandResult buildResult = oautils:executeBalBuild(clientPath, quietMode);
     if oautils:hasCompilationErrors(buildResult) {
         io:println("Build validation failed: client contains compilation errors");
@@ -1507,7 +1520,25 @@ function runOpenApiPipeline(string[] args) returns error? {
         io:println("Client built and validated successfully");
     }
 
-    printOpenApiStepHeader(4, "Generating Examples", quietMode);
+    if generateConnector {
+        printOpenApiStepHeader(connectorStep, totalSteps, "Generating Connector Client", quietMode);
+        string[] connectorArgs = [outputDir];
+        if autoYes {
+            connectorArgs.push("yes");
+        }
+        if quietMode {
+            connectorArgs.push("quiet");
+        }
+        error? connectorResult = simple_connector_gen:executeSimpleConnectorGen(...connectorArgs);
+        if connectorResult is error {
+            io:println(string `Connector client generation failed: ${connectorResult.message()}`);
+            io:println("Continuing pipeline...");
+        } else if !quietMode {
+            io:println("Connector client generation completed");
+        }
+    }
+
+    printOpenApiStepHeader(exampleStep, totalSteps, "Generating Examples", quietMode);
     string[] exampleArgs = [outputDir, ...pipelineOptions];
     error? exampleResult = example_generator:executeExampleGen(...exampleArgs);
     if exampleResult is error {
@@ -1517,7 +1548,7 @@ function runOpenApiPipeline(string[] args) returns error? {
         io:println("Example generation completed successfully");
     }
 
-    printOpenApiStepHeader(5, "Generating Tests", quietMode);
+    printOpenApiStepHeader(testStep, totalSteps, "Generating Tests", quietMode);
     string[] testArgs = [outputDir, sanitizedSpec, ...pipelineOptions];
     error? testResult = test_generator:executeTestGen("openapi", ...testArgs);
     if testResult is error {
@@ -1527,7 +1558,7 @@ function runOpenApiPipeline(string[] args) returns error? {
         io:println("Test generation completed successfully");
     }
 
-    printOpenApiStepHeader(6, "Generating Documentation", quietMode);
+    printOpenApiStepHeader(docStep, totalSteps, "Generating Documentation", quietMode);
     string[] docArgs = ["generate-all", outputDir, ...pipelineOptions];
     error? docResult = document_generator:executeDocGen(...docArgs);
     if docResult is error {
@@ -1557,7 +1588,7 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
         io:println("Recorded sanitations applied to the new specification");
     }
 
-    printOpenApiStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
+    printOpenApiStepHeader(1, 6, "Sanitizing OpenAPI Specification", quietMode);
     error? sanitizeResult = sanitizor:executeSanitizor(openApiSpec, outputDir, ...pipelineOptions);
     if sanitizeResult is error {
         return sanitizeResult;
@@ -1570,7 +1601,7 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
         io:println(string `Could not refresh sanitations.md: ${sanitationsDocResult.message()}`);
     }
 
-    printOpenApiStepHeader(2, "Regenerating Ballerina Client", quietMode);
+    printOpenApiStepHeader(2, 6, "Regenerating Ballerina Client", quietMode);
     string clientPath = string `${outputDir}/ballerina`;
     error? clientResult = client_generator:executeClientGen(sanitizedSpec, clientPath, ...pipelineOptions);
     if clientResult is error {
@@ -1578,7 +1609,7 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
         io:println("Continuing pipeline...");
     }
 
-    printOpenApiStepHeader(3, "Building and Validating Client", quietMode);
+    printOpenApiStepHeader(3, 6, "Building and Validating Client", quietMode);
     oautils:CommandResult buildResult = oautils:executeBalBuild(clientPath, quietMode);
     if oautils:hasCompilationErrors(buildResult) {
         string[] fixerArgs = [clientPath];
@@ -1604,7 +1635,7 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
                 io:println(string `Could not remove old mock module: ${removeMock.message()}`);
             }
 
-            printOpenApiStepHeader(4, "Regenerating Tests for New API Version", quietMode);
+            printOpenApiStepHeader(4, 6, "Regenerating Tests for New API Version", quietMode);
             error? testResult = test_generator:executeTestGen("openapi", outputDir, sanitizedSpec,
                 ...pipelineOptions);
             if testResult is error {
@@ -1616,10 +1647,23 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
                 if finalFix is error {
                     return finalFix;
                 }
+
+                // If errors remain after all repair attempts and connector.bal exists,
+                // the API change may be too large for the code-fixer to handle automatically.
+                // Offer the user a path to regenerate from scratch.
+                oautils:CommandResult postFixBuild = oautils:executeBalBuild(clientPath, true);
+                if oautils:hasCompilationErrors(postFixBuild) {
+                    boolean connectorExists = check file:test(clientPath + "/connector.bal", file:EXISTS);
+                    if connectorExists {
+                        io:println("⚠  connector.bal still has errors after all repair attempts.");
+                        io:println("   The API change may be too large for the code-fixer to resolve automatically.");
+                        io:println(string `   To regenerate from scratch: bal run -- openapi generate-connector ${outputDir}`);
+                    }
+                }
             }
         }
     } else {
-        printOpenApiStepHeader(4, "Regenerating Tests", quietMode);
+        printOpenApiStepHeader(4, 6, "Regenerating Tests", quietMode);
         error? testResult = test_generator:executeTestGen("openapi", outputDir, sanitizedSpec,
             ...pipelineOptions);
         if testResult is error {
@@ -1627,13 +1671,13 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
         }
     }
 
-    printOpenApiStepHeader(5, "Regenerating Examples", quietMode);
+    printOpenApiStepHeader(5, 6, "Regenerating Examples", quietMode);
     error? exampleResult = example_generator:executeExampleGen(outputDir, ...pipelineOptions);
     if exampleResult is error {
         io:println(string `Example regeneration failed: ${exampleResult.message()}`);
     }
 
-    printOpenApiStepHeader(6, "Generating Documentation", quietMode);
+    printOpenApiStepHeader(6, 6, "Generating Documentation", quietMode);
     error? docResult = document_generator:executeDocGen("generate-all", outputDir, ...pipelineOptions);
     if docResult is error {
         io:println(string `Documentation generation failed: ${docResult.message()}`);
@@ -1642,7 +1686,8 @@ function runOpenApiRegenerationPipeline(string openApiSpec, string outputDir, st
     printOpenApiRegenerationCompletion(outputDir, quietMode);
 }
 
-function printOpenApiPipelineHeader(string openApiSpec, string outputDir, boolean quietMode, boolean regenerate) {
+function printOpenApiPipelineHeader(string openApiSpec, string outputDir, boolean quietMode,
+        boolean regenerate, boolean generateConnector = false) {
     if quietMode {
         return;
     }
@@ -1658,19 +1703,26 @@ function printOpenApiPipelineHeader(string openApiSpec, string outputDir, boolea
     io:println("  1. Sanitize OpenAPI specification");
     io:println("  2. Generate Ballerina client");
     io:println("  3. Build and validate client");
-    io:println("  4. Generate examples");
-    io:println("  5. Generate tests");
-    io:println("  6. Generate documentation");
+    if generateConnector {
+        io:println("  4. Generate Connector client");
+        io:println("  5. Generate examples");
+        io:println("  6. Generate tests");
+        io:println("  7. Generate documentation");
+    } else {
+        io:println("  4. Generate examples");
+        io:println("  5. Generate tests");
+        io:println("  6. Generate documentation");
+    }
     io:println(sep);
 }
 
-function printOpenApiStepHeader(int stepNum, string title, boolean quietMode) {
+function printOpenApiStepHeader(int stepNum, int totalSteps, string title, boolean quietMode) {
     if quietMode {
         return;
     }
     string sep = createMainSeparator("-", 60);
     io:println("");
-    io:println(string `[${stepNum}/6] ${title}`);
+    io:println(string `[${stepNum}/${totalSteps}] ${title}`);
     io:println(sep);
 }
 
@@ -1713,19 +1765,21 @@ function printOpenApiUsage() {
     io:println("  bal run -- openapi pipeline <spec> <output-dir> [options]");
     io:println("  bal run -- openapi sanitize <spec> <output-dir> [options]");
     io:println("  bal run -- openapi generate-client <spec> <output-dir> [options]");
+    io:println("  bal run -- openapi generate-connector <connector-path> [options]");
     io:println("  bal run -- openapi fix-code <connector-path> [options]");
     io:println("  bal run -- openapi generate-tests <connector-path> <spec-path> [options]");
     io:println("  bal run -- openapi generate-examples <connector-path> [options]");
     io:println("  bal run -- openapi generate-docs <doc-command> <connector-path> [options]");
     io:println();
     io:println("COMMANDS:");
-    io:println("  pipeline          Run full OpenAPI pipeline end-to-end");
-    io:println("  sanitize          Sanitize and enhance the OpenAPI specification");
-    io:println("  generate-client   Generate Ballerina client from sanitized spec");
-    io:println("  fix-code          Fix compilation errors in generated client");
-    io:println("  generate-tests    Generate mock server + live integration tests");
-    io:println("  generate-examples Generate code examples for the connector");
-    io:println("  generate-docs     Generate documentation (specify doc-command)");
+    io:println("  pipeline            Run full OpenAPI pipeline end-to-end");
+    io:println("  sanitize            Sanitize and enhance the OpenAPI specification");
+    io:println("  generate-client     Generate Ballerina client from sanitized spec");
+    io:println("  generate-connector  Generate curated Connector client");
+    io:println("  fix-code            Fix compilation errors in generated client");
+    io:println("  generate-tests      Generate mock server + live integration tests");
+    io:println("  generate-examples   Generate code examples for the connector");
+    io:println("  generate-docs       Generate documentation (specify doc-command)");
     io:println();
     io:println("DOC COMMANDS (for generate-docs):");
     io:println("  generate-all");
@@ -1736,15 +1790,18 @@ function printOpenApiUsage() {
     io:println("  generate-main");
     io:println();
     io:println("OPTIONS:");
-    io:println("  yes      Auto-confirm all prompts");
-    io:println("  quiet    Minimal logging output");
-    io:println("  regenerate  Reapply recorded sanitations and recover tests/examples for an updated spec");
+    io:println("  yes                   Auto-confirm all prompts");
+    io:println("  quiet                 Minimal logging output");
+    io:println("  regenerate            Reapply recorded sanitations and recover tests/examples");
+    io:println("  --generate-connector  Include Connector client generation in pipeline");
     io:println();
     io:println("EXAMPLES:");
     io:println("  bal run -- openapi pipeline /home/user/spec.yaml /home/user/my-connector");
+    io:println("  bal run -- openapi pipeline /home/user/spec.yaml /home/user/my-connector --generate-connector");
     io:println("  bal run -- openapi pipeline /home/user/spec.yaml /home/user/my-connector yes regenerate");
     io:println("  bal run -- openapi sanitize /home/user/spec.yaml /home/user/my-connector");
     io:println("  bal run -- openapi generate-client /home/user/spec.yaml /home/user/my-connector");
+    io:println("  bal run -- openapi generate-connector /home/user/my-connector");
     io:println("  bal run -- openapi fix-code /home/user/my-connector/ballerina");
     io:println("  bal run -- openapi generate-tests /home/user/my-connector /home/user/spec.yaml");
     io:println("  bal run -- openapi generate-docs /home/user/my-connector");
@@ -1773,6 +1830,7 @@ function printMainUsage() {
     io:println("  openapi pipeline <spec> <output-dir>       Run full OpenAPI pipeline");
     io:println("  openapi sanitize <spec> <output-dir>       Sanitize OpenAPI specification");
     io:println("  openapi generate-client <spec> <output>    Generate Ballerina client");
+    io:println("  openapi generate-connector <path>          Generate Connector client");
     io:println("  openapi fix-code <connector-path>          Fix compilation errors");
     io:println("  openapi generate-tests <path> <spec>       Generate mock + live tests");
     io:println("  openapi generate-examples <path>           Generate examples");

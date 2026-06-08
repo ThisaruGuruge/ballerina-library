@@ -47,9 +47,27 @@ type AnalysisResult record {
 };
 
 const string VERSION_RULES = string `RULES FOR VERSION CLASSIFICATION:
-- MAJOR: Breaking changes (removed/renamed methods, removed/renamed types, changed method signatures, changed field types, removed fields)
-- MINOR: Backward-compatible additions (new methods, new types, new optional fields, new fields with default values)
-- PATCH: Documentation changes, internal refactoring, bug fixes with no API surface changes`;
+
+General rules (apply to client.bal and types.bal):
+- MAJOR: Breaking changes — removed or renamed methods, removed or renamed types, changed method
+  signatures, changed field types, removed required fields
+- MINOR: Backward-compatible additions — new methods, new types, new optional fields, new fields
+  with default values
+- PATCH: Documentation changes, internal refactoring, bug fixes with no API surface changes
+
+connector.bal rules (Connector client — curated @operation methods):
+The Connector class is a separately versioned public API surface. Apply these rules in addition to
+the general rules above. A Connector change can independently drive the version bump.
+- MAJOR: Removed or renamed an @operation remote method; changed the type or count of parameters
+  on an @operation method; removed or renamed a field of AuthConfig; Connector class removed
+- MINOR: Added new @operation remote methods to an existing Connector class; added optional fields
+  to AuthConfig; Connector class introduced for the first time (connector.bal added)
+- PATCH: Updated delegation logic inside an existing @operation without changing its signature;
+  updated @display labels or doc comments; changed internal helper functions that are not part
+  of the public interface; fixed a compilation error in connector.bal without changing its API
+
+Precedence: if connector.bal has a MAJOR change and client.bal only has MINOR changes, the overall
+version bump is MAJOR. The highest classification across all changed files wins.`;
 
 const string JSON_SCHEMA = string `{
   "changeType": "MAJOR|MINOR|PATCH",

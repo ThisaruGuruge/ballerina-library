@@ -228,7 +228,8 @@ function isEligibleBallerinaSourcePath(string path) returns boolean {
         lower.includes("/build/") {
         return false;
     }
-    return lower.endsWith("client.bal") || lower.endsWith("types.bal") || lower.endsWith("main.bal") || lower.endsWith("test.bal");
+    return lower.endsWith("client.bal") || lower.endsWith("types.bal") || lower.endsWith("main.bal") ||
+        lower.endsWith("test.bal") || lower.endsWith("connector.bal");
 }
 
 function isInteropClassNotFoundError(CompilationError err) returns boolean {
@@ -815,7 +816,8 @@ public function fixFileWithLLM(string projectPath, string filePath, CompilationE
     }
 
     log:printInfo("Attempting LLM-based Ballerina fix", filePath = filePath, errorCount = errors.length());
-    string typeContext = (filePath.includes("test") || filePath.includes("mock")) ?
+    string typeContext = (filePath.includes("test") || filePath.includes("mock") ||
+            filePath.endsWith("connector.bal")) ?
         getTypeContextForFile(projectPath, filePath) : "";
     string prompt = createFixPromptWithHistory(fileContent, errors, filePath, typeContext,
             buildFixHistoryContext(previousAttempts));
